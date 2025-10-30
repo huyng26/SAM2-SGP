@@ -24,8 +24,8 @@ def parse_args():
     parser.add_argument('-device', help='gpu device for dist training')
     parser.add_argument('-dist', default=False, type=bool, help='whether use multi GPU')
     parser.add_argument('-dataset', default='msd' ,type=str,help='dataset name')
-    parser.add_argument('-sam_ckpt', type=str, default=None , help='sam checkpoint address')
-    parser.add_argument('-sam_config', type=str, default=None , help='sam checkpoint address')
+    parser.add_argument('-sam_ckpt', type=str, default="None" , help='sam checkpoint address')
+    parser.add_argument('-sam_config', type=str, default="/mnt/disk1/quangminh/SAM2-SGP/sam2_train/sam2_hiera_s.yaml" , help='sam checkpoint address')
     parser.add_argument('-video_length', type=int, default=8, help='sam checkpoint address')
     parser.add_argument('-epoch', type=int, default=0, help='starting epoch')
     parser.add_argument('-b', type=int, default=1, help='batch size for dataloader')
@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument(
     '-data_path',
     type=str,
-    default='/mnt/disk1/aiotlab/huync/AAAI-MedSam2/Combined_Dataset',
+    default='/mnt/disk1/quangminh/SAM2-SGP/Combined_Dataset',
     help='The path of segmentation data')
     opt = parser.parse_args()
 
