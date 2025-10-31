@@ -1,6 +1,7 @@
 /wandb/
 */__pycache__/*
 /Combined_Dataset/
+/checkpoints/
 /.vscode/
 /.git/
-/.idea/ 
+/.idea/

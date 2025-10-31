@@ -270,9 +270,19 @@ class Hiera(nn.Module):
         h, w = hw
         window_embed = self.pos_embed_window
         pos_embed = F.interpolate(self.pos_embed, size=(h, w), mode="bicubic")
-        pos_embed = pos_embed + window_embed.tile(
-            [x // y for x, y in zip(pos_embed.shape, window_embed.shape)]
-        )
+        
+        # Fixed: Use repeat with ceiling division instead of tile with floor division
+        B, C, H, W = pos_embed.shape
+        _, _, H_win, W_win = window_embed.shape
+        
+        # Calculate how many tiles needed (ceiling division)
+        n_tiles_h = (H + H_win - 1) // H_win
+        n_tiles_w = (W + W_win - 1) // W_win
+        
+        # Repeat window_embed and crop to exact size
+        window_embed_tiled = window_embed.repeat(1, 1, n_tiles_h, n_tiles_w)[:, :, :H, :W]
+        
+        pos_embed = pos_embed + window_embed_tiled
         pos_embed = pos_embed.permute(0, 2, 3, 1)
         return pos_embed
 

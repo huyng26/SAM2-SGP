@@ -107,6 +107,8 @@ class SAM2VideoPredictor(SAM2Base):
     def val_init_state(
         self,
         imgs_tensor,
+        masks_tensor,
+        support_imgs_tensor,
         video_height=None,
         video_width=None,
         offload_video_to_cpu=False,
@@ -122,9 +124,18 @@ class SAM2VideoPredictor(SAM2Base):
             offload_video_to_cpu=offload_video_to_cpu,
             async_loading_frames=async_loading_frames,
         )
+        
+        # Add support images
+        support_images = load_video_frames_from_data(
+            imgs_tensor=support_imgs_tensor,
+            offload_video_to_cpu=offload_video_to_cpu,
+            async_loading_frames=async_loading_frames,
+        )
         inference_state = {}
         inference_state["images"] = images
+        inference_state["support_images"] = support_images
         inference_state["num_frames"] = len(images)
+        inference_state["support_num_frames"] = len(support_images)
         # whether to offload the video frames to CPU memory
         # turning on this option saves the GPU memory with only a very small overhead
         inference_state["offload_video_to_cpu"] = offload_video_to_cpu
@@ -172,7 +183,10 @@ class SAM2VideoPredictor(SAM2Base):
         inference_state["tracking_has_started"] = False
         inference_state["frames_already_tracked"] = {}
         # Warm up the visual backbone and cache the image feature on frame 0
-        self._get_image_feature(inference_state, frame_idx=0, batch_size=1)
+        inference_state["support_set_stage"] = True
+        
+        # # Temporarily skip this 
+        # self._get_image_feature(inference_state, frame_idx=0, batch_size=1)
         return inference_state
 
     # @torch.inference_mode()
@@ -1144,55 +1158,48 @@ class SAM2VideoPredictor(SAM2Base):
             self.clear_non_cond_mem_for_multi_obj or batch_size <= 1
         )
 
-        # set start index, end index, and processing order
-        if start_frame_idx is None:
-            # default: start from the earliest frame with input points
-            start_frame_idx = min(output_dict["cond_frame_outputs"])
-        if max_frame_num_to_track is None:
-            # default: track all the frames in the video
-            max_frame_num_to_track = num_frames
-        if reverse:
-            end_frame_idx = max(start_frame_idx - max_frame_num_to_track, 0)
-            if start_frame_idx > 0:
-                processing_order = range(start_frame_idx, end_frame_idx - 1, -1)
-            else:
-                processing_order = []  # skip reverse tracking if starting from frame 0
-        else:
-            end_frame_idx = min(
-                start_frame_idx + max_frame_num_to_track, num_frames - 1
-            )
-            processing_order = range(start_frame_idx, end_frame_idx + 1)
-
+        # # set start index, end index, and processing order
+        # if start_frame_idx is None:
+        #     # default: start from the earliest frame with input points
+        #     start_frame_idx = min(output_dict["cond_frame_outputs"])
+        # if max_frame_num_to_track is None:
+        #     # default: track all the frames in the video
+        #     max_frame_num_to_track = num_frames
+        # if reverse:
+        #     end_frame_idx = max(start_frame_idx - max_frame_num_to_track, 0)
+        #     if start_frame_idx > 0:
+        #         processing_order = range(start_frame_idx, end_frame_idx - 1, -1)
+        #     else:
+        #         processing_order = []  # skip reverse tracking if starting from frame 0
+        # else:
+        #     end_frame_idx = min(
+        #         start_frame_idx + max_frame_num_to_track, num_frames - 1
+        #     )
+        #     processing_order = range(start_frame_idx, end_frame_idx + 1)
+        
+        
+        inference_state["support_set_stage"] = False
+        processing_order = range(num_frames)
+        
         for frame_idx in processing_order:
             # We skip those frames already in consolidated outputs (these are frames
             # that received input clicks or mask). Note that we cannot directly run
             # batched forward on them via `_run_single_frame_inference` because the
             # number of clicks on each object might be different.
-            if frame_idx in consolidated_frame_inds["cond_frame_outputs"]:
-                storage_key = "cond_frame_outputs"
-                current_out = output_dict[storage_key][frame_idx]
-                pred_masks = current_out["pred_masks"]
-                if clear_non_cond_mem:
-                    # clear non-conditioning memory of the surrounding frames
-                    self._clear_non_cond_mem_around_input(inference_state, frame_idx)
-            elif frame_idx in consolidated_frame_inds["non_cond_frame_outputs"]:
-                storage_key = "non_cond_frame_outputs"
-                current_out = output_dict[storage_key][frame_idx]
-                pred_masks = current_out["pred_masks"]
-            else:
-                storage_key = "non_cond_frame_outputs"
-                current_out, pred_masks = self._run_single_frame_inference(
-                    inference_state=inference_state,
-                    output_dict=output_dict,
-                    frame_idx=frame_idx,
-                    batch_size=batch_size,
-                    is_init_cond_frame=False,
-                    point_inputs=None,
-                    mask_inputs=None,
-                    reverse=reverse,
-                    run_mem_encoder=True,
-                )
-                output_dict[storage_key][frame_idx] = current_out
+            
+            storage_key = "non_cond_frame_outputs"
+            current_out, pred_masks = self._run_single_frame_inference(
+                inference_state=inference_state,
+                output_dict=output_dict,
+                frame_idx=frame_idx,
+                batch_size=batch_size,
+                is_init_cond_frame=False,
+                point_inputs=None,
+                mask_inputs=None,
+                reverse=reverse,
+                run_mem_encoder=True,
+            )
+            output_dict[storage_key][frame_idx] = current_out
             # Create slices of per-object outputs for subsequent interaction with each
             # individual object after tracking.
             self._add_output_per_object(
@@ -1205,7 +1212,55 @@ class SAM2VideoPredictor(SAM2Base):
             _, video_res_masks = self._get_orig_video_res_output(
                 inference_state, pred_masks
             )
-            yield frame_idx, obj_ids, video_res_masks
+            yield frame_idx, obj_ids, current_out["ious"], current_out["object_score_logits"], video_res_masks
+
+        # for frame_idx in processing_order:
+        #     # We skip those frames already in consolidated outputs (these are frames
+        #     # that received input clicks or mask). Note that we cannot directly run
+        #     # batched forward on them via `_run_single_frame_inference` because the
+        #     # number of clicks on each object might be different.
+        #     if frame_idx in consolidated_frame_inds["cond_frame_outputs"]:
+        #         storage_key = "cond_frame_outputs"
+        #         print("Get current_out from 1")
+        #         current_out = output_dict[storage_key][frame_idx]
+        #         pred_masks = current_out["pred_masks"]
+        #         if clear_non_cond_mem:
+        #             # clear non-conditioning memory of the surrounding frames
+        #             self._clear_non_cond_mem_around_input(inference_state, frame_idx)
+        #     elif frame_idx in consolidated_frame_inds["non_cond_frame_outputs"]:
+        #         storage_key = "non_cond_frame_outputs"
+        #         print("get current_out from 2")
+        #         current_out = output_dict[storage_key][frame_idx]
+        #         pred_masks = current_out["pred_masks"]
+        #     else:
+        #         storage_key = "non_cond_frame_outputs"
+        #         print("get current_out from 3")
+        #         current_out, pred_masks = self._run_single_frame_inference(
+        #             inference_state=inference_state,
+        #             output_dict=output_dict,
+        #             frame_idx=frame_idx,
+        #             batch_size=batch_size,
+        #             is_init_cond_frame=False,
+        #             point_inputs=None,
+        #             mask_inputs=None,
+        #             reverse=reverse,
+        #             run_mem_encoder=True,
+        #         )
+        #         output_dict[storage_key][frame_idx] = current_out
+        #     # Create slices of per-object outputs for subsequent interaction with each
+        #     # individual object after tracking.
+        #     self._add_output_per_object(
+        #         inference_state, frame_idx, current_out, storage_key
+        #     )
+        #     inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
+
+        #     # Resize the output mask to the original video resolution (we directly use
+        #     # the mask scores on GPU for output to avoid any CPU conversion in between)
+        #     _, video_res_masks = self._get_orig_video_res_output(
+        #         inference_state, pred_masks
+        #     )
+        #     print(current_out.keys())
+            # yield frame_idx, obj_ids, current_out["ious"], current_out["object_score_logits"], video_res_masks
 
     def _add_output_per_object(
         self, inference_state, frame_idx, current_out, storage_key
@@ -1269,17 +1324,14 @@ class SAM2VideoPredictor(SAM2Base):
 
     def _get_image_feature(self, inference_state, frame_idx, batch_size):
         """Compute the image features on a given frame."""
-        # Look up in the cache first
-        image, backbone_out = inference_state["cached_features"].get(
-            frame_idx, (None, None)
-        )
-        if backbone_out is None:
-            # Cache miss -- we will run inference on a single image
-            image = inference_state["images"][frame_idx].cuda().float().unsqueeze(0)
-            backbone_out = self.forward_image(image)
-            # Cache the most recent frame's feature (for repeated interactions with
-            # a frame; we can use an LRU cache for more frames in the future).
-            inference_state["cached_features"] = {frame_idx: (image, backbone_out)}
+
+        if inference_state["support_set_stage"]:
+            image = inference_state["support_images"][frame_idx].to(device=inference_state["device"]).float().unsqueeze(0)
+        else:
+            image = inference_state["images"][frame_idx].to(device=inference_state["device"]).float().unsqueeze(0)
+        backbone_out = self.forward_image(image) # dict_keys(['vision_features', 'vision_pos_enc', 'backbone_fpn'])
+        # Cache the most recent frame's feature (for repeated interactions with
+        # a frame; we can use an LRU cache for more frames in the future).
 
         # expand the features to have the same dimension as the number of objects
         expanded_image = image.expand(batch_size, -1, -1, -1)
@@ -1298,6 +1350,37 @@ class SAM2VideoPredictor(SAM2Base):
         features = self._prepare_backbone_features(expanded_backbone_out)
         features = (expanded_image,) + features
         return features
+    # def _get_image_feature(self, inference_state, frame_idx, batch_size):
+    #     """Compute the image features on a given frame."""
+    #     # Look up in the cache first
+    #     image, backbone_out = inference_state["cached_features"].get(
+    #         frame_idx, (None, None)
+    #     )
+    #     if backbone_out is None:
+    #         # Cache miss -- we will run inference on a single image
+    #         image = inference_state["images"][frame_idx].cuda().float().unsqueeze(0)
+    #         backbone_out = self.forward_image(image)
+    #         # Cache the most recent frame's feature (for repeated interactions with
+    #         # a frame; we can use an LRU cache for more frames in the future).
+    #         inference_state["cached_features"] = {frame_idx: (image, backbone_out)}
+
+    #     # expand the features to have the same dimension as the number of objects
+    #     expanded_image = image.expand(batch_size, -1, -1, -1)
+    #     expanded_backbone_out = {
+    #         "backbone_fpn": backbone_out["backbone_fpn"].copy(),
+    #         "vision_pos_enc": backbone_out["vision_pos_enc"].copy(),
+    #     }
+    #     for i, feat in enumerate(expanded_backbone_out["backbone_fpn"]):
+    #         expanded_backbone_out["backbone_fpn"][i] = feat.expand(
+    #             batch_size, -1, -1, -1
+    #         )
+    #     for i, pos in enumerate(expanded_backbone_out["vision_pos_enc"]):
+    #         pos = pos.expand(batch_size, -1, -1, -1)
+    #         expanded_backbone_out["vision_pos_enc"][i] = pos
+
+    #     features = self._prepare_backbone_features(expanded_backbone_out)
+    #     features = (expanded_image,) + features
+    #     return features
 
     def _run_single_frame_inference(
         self,
@@ -1346,21 +1429,27 @@ class SAM2VideoPredictor(SAM2Base):
             maskmem_features = maskmem_features.to(torch.bfloat16)
             maskmem_features = maskmem_features.to(storage_device, non_blocking=True)
         pred_masks_gpu = current_out["pred_masks"]
-        # potentially fill holes in the predicted masks
-        if self.fill_hole_area > 0:
-            pred_masks_gpu = fill_holes_in_mask_scores(
-                pred_masks_gpu, self.fill_hole_area
-            )
+        # # potentially fill holes in the predicted masks
+        # if self.fill_hole_area > 0:
+        #     pred_masks_gpu = fill_holes_in_mask_scores(
+        #         pred_masks_gpu, self.fill_hole_area
+        #     )
         pred_masks = pred_masks_gpu.to(storage_device, non_blocking=True)
         # "maskmem_pos_enc" is the same across frames, so we only need to store one copy of it
         maskmem_pos_enc = self._get_maskmem_pos_enc(inference_state, current_out)
         # object pointer is a small tensor, so we always keep it on GPU memory for fast access
         obj_ptr = current_out["obj_ptr"]
+        ious = current_out["ious"]
+        object_score_logits = current_out["object_score_logits"]
+        vision_feats = current_vision_feats[-1]
         # make a compact version of this frame's output to reduce the state size
         compact_current_out = {
             "maskmem_features": maskmem_features,
             "maskmem_pos_enc": maskmem_pos_enc,
+            "vision_feats": vision_feats,
             "pred_masks": pred_masks,
+            "ious": ious,
+            "object_score_logits": object_score_logits,
             "obj_ptr": obj_ptr,
         }
         return compact_current_out, pred_masks_gpu

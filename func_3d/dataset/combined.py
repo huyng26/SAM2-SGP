@@ -80,29 +80,58 @@ class Combined(Dataset):
         volume_id = 0
         self.dataset_list = os.listdir(data_path)
         
-        for dataset in self.dataset_list:
-            if dataset.startswith("."):
+        for dataset_name in self.dataset_list:
+            if dataset_name.startswith("."):
                 continue
-            # NOTE: just run on MSD first
-            if dataset.upper() in ['BTCV', 'SARCOMA']: 
+            if dataset_name.upper() in ['BTCV', 'SARCOMA']: 
                 continue
-            data = Data(dataset)
-            for task in os.listdir(os.path.join(data_path, dataset)):
-                if task.startswith("."):
-                    continue
-                new_task = Task(task)
+            
+            dataset_path = os.path.join(data_path, dataset_name)
+            
+            if dataset_name.startswith("Task"):
+                data = Data("MSD")
+                new_task = Task(dataset_name)
                 data.add_new_task(new_task)
-                for volume in os.listdir(os.path.join(data_path, dataset, task, self.dir)):
+                
+                images_dir = os.path.join(dataset_path, self.dir)
+                if not os.path.exists(images_dir):
+                    continue
+                    
+                for volume in os.listdir(images_dir):
                     if volume.startswith("."):
                         continue                    
                     new_volume_name = volume
-                    new_volume_path = os.path.join(data_path, dataset, task, self.dir, volume)
+                    new_volume_path = os.path.join(images_dir, volume)
                     new_volume = Volume(new_volume_name, volume_id, new_volume_path)
                     volume_id += 1
                     new_task.add_new_volume(new_volume)
+                
                 new_task.get_support_stance()
-            
-            self.dataset.append(data)
+                self.dataset.append(data)
+            else:
+                data = Data(dataset_name)
+                for task in os.listdir(dataset_path):
+                    if task.startswith("."):
+                        continue
+                    new_task = Task(task)
+                    data.add_new_task(new_task)
+                    
+                    task_images_dir = os.path.join(dataset_path, task, self.dir)
+                    if not os.path.exists(task_images_dir):
+                        continue
+                        
+                    for volume in os.listdir(task_images_dir):
+                        if volume.startswith("."):
+                            continue                    
+                        new_volume_name = volume
+                        new_volume_path = os.path.join(task_images_dir, volume)
+                        new_volume = Volume(new_volume_name, volume_id, new_volume_path)
+                        volume_id += 1
+                        new_task.add_new_volume(new_volume)
+                    
+                    new_task.get_support_stance()
+                
+                self.dataset.append(data)
 
         self.name_list = [volume for dataset in self.dataset for task in dataset.task for volume in task.volume]
         
@@ -221,12 +250,11 @@ class Combined(Dataset):
         support_data_seg_3d = F.interpolate(support_data_seg_3d, size=(support_data_seg_3d.shape[2], self.img_size, self.img_size), mode='nearest')
         support_image_3d = support_image_3d.squeeze(0).repeat(3, 1, 1, 1).permute(1, 0, 2, 3)
         support_data_seg_3d = support_data_seg_3d.squeeze(0).squeeze(0)
-
-        output_dict ={"image": image_3d, "label": data_seg_3d,
-                "support_image": support_image_3d, "support_label": support_data_seg_3d,
-                "name": name}
+        point_label, pt = random_click(np.array(data_seg_3d), 1)
+        image_meta_dict = {'filename_or_obj': [name.volume_name]}
+        output_dict ={"image": image_3d, "mask": data_seg_3d, 'p_label': point_label, 'pt': pt, 'image_meta_dict': image_meta_dict}
         
-        return output_dict
+        return {"image": image_3d, "mask": data_seg_3d, 'p_label': point_label, 'pt': pt, 'image_meta_dict': image_meta_dict}
 
 class CombinedTask02Heart(Combined):
     """

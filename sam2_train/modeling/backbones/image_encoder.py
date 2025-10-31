@@ -98,34 +98,72 @@ class FpnNeck(nn.Module):
             fpn_top_down_levels = range(len(self.convs))
         self.fpn_top_down_levels = list(fpn_top_down_levels)
 
-    def forward(self, xs: List[torch.Tensor]):
+    # def forward(self, xs: List[torch.Tensor]):
 
+    #     out = [None] * len(self.convs)
+    #     pos = [None] * len(self.convs)
+    #     assert len(xs) == len(self.convs)
+    #     # fpn forward pass
+    #     # see https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/fpn.py
+    #     prev_features = None
+    #     # forward in top-down order (from low to high resolution)
+    #     n = len(self.convs) - 1
+    #     for i in range(n, -1, -1):
+    #         x = xs[i]
+    #         lateral_features = self.convs[n - i](x)
+    #         if i in self.fpn_top_down_levels and prev_features is not None:
+    #             top_down_features = F.interpolate(
+    #                 prev_features.to(dtype=torch.float32),
+    #                 scale_factor=2.0,
+    #                 mode=self.fpn_interp_model,
+    #                 align_corners=(
+    #                     None if self.fpn_interp_model == "nearest" else False
+    #                 ),
+    #                 antialias=False,
+    #             )
+    #             prev_features = lateral_features + top_down_features
+    #             if self.fuse_type == "avg":
+    #                 prev_features /= 2
+    #         else:
+    #             prev_features = lateral_features
+    #         x_out = prev_features
+    #         out[i] = x_out
+    #         pos[i] = self.position_encoding(x_out).to(x_out.dtype)
+
+    #     return out, pos
+    
+    def forward(self, xs: List[torch.Tensor]):
         out = [None] * len(self.convs)
         pos = [None] * len(self.convs)
         assert len(xs) == len(self.convs)
-        # fpn forward pass
-        # see https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/fpn.py
+        
         prev_features = None
-        # forward in top-down order (from low to high resolution)
         n = len(self.convs) - 1
+        
         for i in range(n, -1, -1):
             x = xs[i]
             lateral_features = self.convs[n - i](x)
+            
             if i in self.fpn_top_down_levels and prev_features is not None:
+                # FIX: Use exact target size instead of scale_factor
+                target_size = lateral_features.shape[-2:]  # Get (H, W) from lateral features
+                
                 top_down_features = F.interpolate(
                     prev_features.to(dtype=torch.float32),
-                    scale_factor=2.0,
+                    size=target_size,  # ← CHANGED: was scale_factor=2.0
                     mode=self.fpn_interp_model,
                     align_corners=(
                         None if self.fpn_interp_model == "nearest" else False
                     ),
                     antialias=False,
                 )
+                
                 prev_features = lateral_features + top_down_features
                 if self.fuse_type == "avg":
                     prev_features /= 2
             else:
                 prev_features = lateral_features
+                
             x_out = prev_features
             out[i] = x_out
             pos[i] = self.position_encoding(x_out).to(x_out.dtype)

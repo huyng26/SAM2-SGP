@@ -9,6 +9,7 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 def pad_depth_to(t: torch.Tensor, D_target: int) -> torch.Tensor:
     """
@@ -116,7 +117,7 @@ def custom_collate_fn(batch):
     }
 
 
-def get_dataloader(args):
+def get_dataloader(args, rank=None, world_size=None):
     # transform_train = transforms.Compose([
     #     transforms.Resize((args.image_size,args.image_size)),
     #     transforms.ToTensor(),
@@ -246,20 +247,46 @@ def get_dataloader(args):
         nice_val_loader = DataLoader(acdc_test_dataset, batch_size=1, sampler=val_sampler, num_workers=8,
                                      pin_memory=False)
     elif args.dataset == 'combined':
-        combined_train_dataset = Combined(args, args.data_path, transform = None, transform_msk= None, mode = 'Training', prompt=args.prompt)
-        combined_test_dataset = Combined(args, args.data_path, transform = None, transform_msk= None, mode = 'Test', prompt=args.prompt)
+        '''amos data'''
+        combined_train_dataset = Combined(args, args.data_path, transform=None, transform_msk=None, mode='Training',
+                                  prompt=args.prompt)
+        combined_test_dataset = Combined(args, args.data_path, transform=None, transform_msk=None, mode='Testing',
+                                 prompt=args.prompt)
+        dataset_size = len(combined_train_dataset)
+        indices = list(range(dataset_size))
+        split_support = 1
+        test_dataset_size = len(combined_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5 * test_dataset_size))
+        np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        train_sampler = SubsetRandomSampler(indices[split_support:])
+        support_sampler = SubsetRandomSampler(indices[:split_support])
+        val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
+        nice_support_loader = DataLoader(combined_train_dataset, batch_size=1, sampler=support_sampler,
+                                         pin_memory=False)
+        nice_train_loader = DataLoader(combined_train_dataset, batch_size=args.b, sampler=train_sampler,
+                                       pin_memory=False)
+        nice_test_loader = DataLoader(combined_test_dataset, batch_size=1, sampler=test_sampler,
+                                      pin_memory=False)
+        nice_val_loader = DataLoader(combined_test_dataset, batch_size=1, sampler=val_sampler,
+                                     pin_memory=False)
+    # elif args.dataset == 'combined':
+    #     combined_train_dataset = Combined(args, args.data_path, transform = None, transform_msk= None, mode = 'Training', prompt=args.prompt)
+    #     combined_test_dataset = Combined(args, args.data_path, transform = None, transform_msk= None, mode = 'Test', prompt=args.prompt)
         
-        if args.distributed:
-            train_sampler = DistributedSampler(combined_train_dataset, num_replicas=world_size, rank=rank)
-            test_sampler = DistributedSampler(combined_test_dataset, num_replicas=world_size, rank=rank)
+    #     if args.distributed:
+    #         train_sampler = DistributedSampler(combined_train_dataset, num_replicas=world_size, rank=rank)
+    #         test_sampler = DistributedSampler(combined_test_dataset, num_replicas=world_size, rank=rank)
 
-            nice_train_loader = DataLoader(combined_train_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, sampler=train_sampler, collate_fn=custom_collate_fn)
-            nice_test_loader = DataLoader(combined_test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, sampler=test_sampler, collate_fn=custom_collate_fn)
-        else:
-            nice_train_loader = DataLoader(combined_train_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True, collate_fn=custom_collate_fn)
-            nice_test_loader = DataLoader(combined_test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, collate_fn=custom_collate_fn)
-        '''end'''
-    else:
-        print("the dataset is not supported now!!!")
-        return nice_train_loader, nice_test_loader
+    #         nice_train_loader = DataLoader(combined_train_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, sampler=train_sampler, collate_fn=custom_collate_fn)
+    #         nice_test_loader = DataLoader(combined_test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, sampler=test_sampler, collate_fn=custom_collate_fn)
+    #     else:
+    #         nice_train_loader = DataLoader(combined_train_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True, collate_fn=custom_collate_fn)
+    #         nice_test_loader = DataLoader(combined_test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True, collate_fn=custom_collate_fn)
+    #     return nice_train_loader, nice_test_loader
+    #     '''end'''
+    # else:
+    #     print("the dataset is not supported now!!!")
     return nice_train_loader, nice_test_loader, nice_support_loader, nice_val_loader

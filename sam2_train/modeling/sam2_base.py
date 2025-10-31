@@ -767,18 +767,21 @@ class SAM2Base(torch.nn.Module):
                 multimask_output=multimask_output,
             )
         (
-            _,
-            _,
-            _,
+            low_res_multimasks,
+            high_res_multimasks,
+            ious,
             low_res_masks,
             high_res_masks,
             obj_ptr,
-            _,
+            object_score_logits,
         ) = sam_outputs
-
+        current_out["low_res_multimasks"] = low_res_multimasks
+        current_out["high_res_multimasks"] = high_res_multimasks
+        current_out["ious"] = ious
         current_out["pred_masks"] = low_res_masks
         current_out["pred_masks_high_res"] = high_res_masks
         current_out["obj_ptr"] = obj_ptr
+        current_out["object_score_logits"] = object_score_logits
 
         # Finally run the memory encoder on the predicted mask to encode
         # it into a new memory feature (that can be used in future frames)

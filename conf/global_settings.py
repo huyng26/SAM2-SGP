@@ -5,7 +5,7 @@ author Yunli
 import os
 from datetime import datetime
 
-CHECKPOINT_PATH = '/home/yxing2/SAM2runs/checkpoint'
+CHECKPOINT_PATH = './checkpoints'
 
 #total training epoches
 EPOCH = 100
