@@ -87,6 +87,3 @@ We appreciate the open-source project including:
 [MedSAM2](https://github.com/SuperMedIntel/Medical-SAM2)
 [H-SAM](https://github.com/Cccccczh404/H-SAM)
 [MedSAM](https://github.com/bowang-lab/MedSAM)
-
-
-
